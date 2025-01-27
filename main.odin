@@ -7,9 +7,9 @@ import rl "vendor:raylib"
 
 BACKGROUND_COLOR :: rl.WHITE
 
-GUY_LIFESPAN : f32 : .7
+GUY_LIFESPAN : f32 : .4
 GUY_RADIUS :: 2
-GUY_SPEED :: 500
+GUY_SPEED :: 300
 GUY_COLOR :: rl.BLACK
 
 Guy :: struct {
@@ -35,27 +35,6 @@ main :: proc() {
 	render_obstacles := true
 
 	obstacles: [dynamic]rl.Rectangle
-
-	append(&obstacles, rl.Rectangle {
-		f32(rl.GetScreenWidth() * -1 / 2),
-		100,
-		f32(rl.GetScreenWidth()),
-		200
-	})
-
-	// append(&obstacles, rl.Rectangle {
-	// 	f32(rl.GetScreenWidth() * -1 / 2) + 300,
-	// 	50,
-	// 	250,
-	// 	100
-	// })
-
-	// append(&obstacles, rl.Rectangle {
-	// 	f32(rl.GetScreenWidth() * -1 / 2),
-	// 	-300,
-	// 	f32(rl.GetScreenWidth()),
-	// 	200
-	// })
 
 	current_obstacle_corner1: rl.Vector2	
 	current_obstacle_corner2: rl.Vector2
@@ -94,37 +73,24 @@ main :: proc() {
 				}
 
 				if rl.IsKeyPressed(.R) {
+					if render_obstacles {
+						making_obstacle = false
+					}
+
 					render_obstacles = !render_obstacles
 				}
 			}
 
 			{ // Mouse
-				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) { // Handle making a new obstacle
-					if making_obstacle { 
-						corner_x := current_obstacle_corner1.x
-						corner_y := current_obstacle_corner1.y
+				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) && render_obstacles { // Handle making a new obstacle
+					if making_obstacle {
+						new_rect := make_rectangle_from_corners(current_obstacle_corner1, current_obstacle_corner2)
 
-						width := current_obstacle_corner2.x - current_obstacle_corner1.x
-						height := current_obstacle_corner2.y - current_obstacle_corner1.y
+						if !is_mguy_colliding_with_obstacle(&main_guy, &new_rect) {
+							append(&obstacles, new_rect)
 
-						if current_obstacle_corner1.x > current_obstacle_corner2.x {
-							corner_x = current_obstacle_corner2.x
-							width = current_obstacle_corner1.x - current_obstacle_corner2.x
+							making_obstacle = false
 						}
-
-						if current_obstacle_corner1.y > current_obstacle_corner2.y {
-							corner_y = current_obstacle_corner2.y
-							height = current_obstacle_corner1.y - current_obstacle_corner2.y
-						}
-
-						append(&obstacles, rl.Rectangle {
-							corner_x, 
-							corner_y, 
-							width,
-							height,
-						})
-
-						making_obstacle = false
 					} 
 					else {
 						current_obstacle_corner1 = rl.Vector2 {
@@ -140,6 +106,19 @@ main :: proc() {
 					current_obstacle_corner2 = rl.Vector2 {
 						real_x_to_world(f32(rl.GetMouseX())),
 						real_y_to_world(f32(rl.GetMouseY()))
+					}
+				}
+
+				if rl.IsMouseButtonPressed(rl.MouseButton.RIGHT) && render_obstacles {
+					mouse_x := real_x_to_world(f32(rl.GetMouseX()))
+					mouse_y := real_y_to_world(f32(rl.GetMouseY()))
+
+					for i := 0; i < len(obstacles); i += 1 {
+						if mouse_x > obstacles[i].x && mouse_x < obstacles[i].x + obstacles[i].width && mouse_y > obstacles[i].y && mouse_y < obstacles[i].y + obstacles[i].height {
+							unordered_remove(&obstacles, i)
+
+							continue
+						}
 					}
 				}
 			}
@@ -176,12 +155,46 @@ main :: proc() {
 					}
 				}
 
-			}
+				if making_obstacle {
+					// these are in real space
+					c1_x := world_x_to_real(current_obstacle_corner1.x)
+					c1_y := world_y_to_real(current_obstacle_corner1.y)
 
-			if making_obstacle {
-				rl.DrawLineV(world_v2_to_real(current_obstacle_corner1), world_v2_to_real(current_obstacle_corner2), rl.BLUE)
+					c2_x := world_x_to_real(current_obstacle_corner2.x)
+					c2_y := world_y_to_real(current_obstacle_corner2.y)
+
+					rl.DrawLineV(rl.Vector2 {c1_x, c2_y}, rl.Vector2 {c2_x, c2_y}, rl.BLUE)
+					rl.DrawLineV(rl.Vector2 {c1_x, c1_y}, rl.Vector2 {c2_x, c1_y}, rl.BLUE)
+					rl.DrawLineV(rl.Vector2 {c1_x, c2_y}, rl.Vector2 {c1_x, c1_y}, rl.BLUE)
+					rl.DrawLineV(rl.Vector2 {c2_x, c1_y}, rl.Vector2 {c2_x, c2_y}, rl.BLUE)
+				}
 			}
 		}
+	}
+}
+
+make_rectangle_from_corners :: proc(c1: rl.Vector2, c2: rl.Vector2) -> rl.Rectangle {
+	corner_x := c1.x
+	corner_y := c1.y
+
+	width := c2.x - c1.x
+	height := c2.y - c1.y
+
+	if c1.x > c2.x {
+		corner_x = c2.x
+		width = c1.x - c2.x
+	}
+
+	if c1.y > c2.y {
+		corner_y = c2.y
+		height = c1.y - c2.y
+	}
+
+	return rl.Rectangle {
+		corner_x, 
+		corner_y, 
+		width,
+		height,
 	}
 }
 
