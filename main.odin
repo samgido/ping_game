@@ -20,7 +20,7 @@ Guy :: struct {
 	direction: rl.Vector2
 }
 
-MGUY_SPEED :: 350
+MGUY_SPEED :: 250
 MGUY_SIDE_LENGTH :: 6
 MGUY_COLOR :: rl.BLACK
 
@@ -81,16 +81,7 @@ main :: proc() {
 					move_main_guy(move_direction, &main_guy, &obstacles)
 				}
 
-				// if rl.IsKeyPressed(.R) {
-				// 	if render_obstacles {
-				
-				// 		making_obstacle = false
-				// 	}
-
-				// 	render_obstacles = !render_obstacles
-				// }
-
-				if rl.IsKeyPressed(.P) {
+				if rl.IsKeyPressed(.P) && !is_v2_within_obstacles(finish_line, &obstacles){
 					game_started = true
 
 					render_obstacles = false
@@ -130,9 +121,8 @@ main :: proc() {
 					mouse_y := real_y_to_world(f32(rl.GetMouseY()))
 
 					for i := 0; i < len(obstacles); i += 1 {
-						if mouse_x > obstacles[i].x && mouse_x < obstacles[i].x + obstacles[i].width && mouse_y > obstacles[i].y && mouse_y < obstacles[i].y + obstacles[i].height {
+						if is_v2_within_obstacle(rl.Vector2 { mouse_x, mouse_y }, obstacles[i]) {
 							unordered_remove(&obstacles, i)
-
 							continue
 						}
 					}
@@ -206,6 +196,18 @@ main :: proc() {
 	}
 
 	rl.CloseWindow()
+}
+
+is_v2_within_obstacle :: proc(v: rl.Vector2, obstacle: rl.Rectangle) -> bool {
+	return v.x > obstacle.x && v.x < obstacle.x + obstacle.width && v.y > obstacle.y && v.y < obstacle.y + obstacle.height
+}
+
+is_v2_within_obstacles :: proc(v: rl.Vector2, obstacles: ^[dynamic]rl.Rectangle) -> bool {
+	for i := 0; i < len(obstacles); i += 1 {
+		if is_v2_within_obstacle(v, obstacles[i]) { return true }
+	}
+
+	return false
 }
 
 is_mguy_colliding_with_finish_line :: proc(main_guy: ^MainGuy, finish_line: rl.Vector2) -> bool {
@@ -385,7 +387,7 @@ make_guys :: proc(origin: rl.Vector2) -> [dynamic]Guy {
 
 		new_guy := Guy {
 			0,
-			origin + 2*(direction * GUY_SPEED * rl.GetFrameTime()),
+			origin + 20*(direction * GUY_SPEED * rl.GetFrameTime()),
 			direction
 		}
 
