@@ -5,6 +5,8 @@ import "core:strings"
 import "core:math"
 import rl "vendor:raylib"
 
+FINISH_LINE_SIDE_LENGTH :: 10
+
 BACKGROUND_COLOR :: rl.WHITE
 
 GUY_LIFESPAN : f32 : .4
@@ -31,6 +33,9 @@ OBSTACLE_COLOR :: rl.BLACK
 
 main :: proc() {
 	rl.InitWindow(1280, 720, "h")	
+	rl.HideCursor()
+
+	mguy_starting_position := rl.Vector2 { f32(rl.GetScreenWidth() * -1 / 2) + 100, 0 }
 
 	render_obstacles := true
 
@@ -40,10 +45,14 @@ main :: proc() {
 	current_obstacle_corner2: rl.Vector2
 	making_obstacle := false
 
+	finish_line: rl.Vector2
+
+	game_started := false
+
 	guys: [dynamic]Guy
 
 	main_guy := MainGuy {
-		rl.Vector2 { f32(rl.GetScreenWidth() * -1 / 2) + 100, 0 },
+		mguy_starting_position, 
 		false,
 	}
 
@@ -56,7 +65,7 @@ main :: proc() {
 			{ // Keyboard
 				using rl.KeyboardKey
 
-				if rl.IsKeyDown(.SPACE) && !main_guy.isPulsing {
+				if (rl.IsKeyDown(.SPACE) && !main_guy.isPulsing) && game_started {
 					main_guy.isPulsing = true
 					guys = make_guys(main_guy.position)
 				}
@@ -68,21 +77,28 @@ main :: proc() {
 				if rl.IsKeyDown(.S) { move_direction += rl.Vector2 { 0, -1 } }
 				if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
 
-				if move_direction.x != 0 || move_direction.y != 0 {
+				if (move_direction.x != 0 || move_direction.y != 0) && game_started {
 					move_main_guy(move_direction, &main_guy, &obstacles)
 				}
 
-				if rl.IsKeyPressed(.R) {
-					if render_obstacles {
-						making_obstacle = false
-					}
+				// if rl.IsKeyPressed(.R) {
+				// 	if render_obstacles {
+				
+				// 		making_obstacle = false
+				// 	}
 
-					render_obstacles = !render_obstacles
+				// 	render_obstacles = !render_obstacles
+				// }
+
+				if rl.IsKeyPressed(.P) {
+					game_started = true
+
+					render_obstacles = false
 				}
 			}
 
 			{ // Mouse
-				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) && render_obstacles { // Handle making a new obstacle
+				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) && render_obstacles && !game_started { // Handle making a new obstacle
 					if making_obstacle {
 						new_rect := make_rectangle_from_corners(current_obstacle_corner1, current_obstacle_corner2)
 
@@ -109,7 +125,7 @@ main :: proc() {
 					}
 				}
 
-				if rl.IsMouseButtonPressed(rl.MouseButton.RIGHT) && render_obstacles {
+				if rl.IsMouseButtonPressed(rl.MouseButton.RIGHT) && render_obstacles && !game_started {
 					mouse_x := real_x_to_world(f32(rl.GetMouseX()))
 					mouse_y := real_y_to_world(f32(rl.GetMouseY()))
 
@@ -120,6 +136,11 @@ main :: proc() {
 							continue
 						}
 					}
+				}
+
+				if !game_started {
+					finish_line.x = real_x_to_world(f32(rl.GetMouseX()))
+					finish_line.y = real_y_to_world(f32(rl.GetMouseY()))
 				}
 			}
 		}
@@ -144,6 +165,10 @@ main :: proc() {
 		{ // Main Guy
 			{ // Render
 				render_mguy(&main_guy)
+
+				if is_mguy_colliding_with_finish_line(&main_guy, finish_line) {
+					break
+				}
 			}
 		}
 
@@ -170,7 +195,28 @@ main :: proc() {
 				}
 			}
 		}
+
+		{ // Finish Line
+			finish_line_real := world_v2_to_real(finish_line)
+			finish_line_real.x -= FINISH_LINE_SIDE_LENGTH / 2
+			finish_line_real.y -= FINISH_LINE_SIDE_LENGTH / 2
+
+			rl.DrawRectangleV(finish_line_real, rl.Vector2 { FINISH_LINE_SIDE_LENGTH, FINISH_LINE_SIDE_LENGTH }, rl.GREEN)
+		}
 	}
+
+	rl.CloseWindow()
+}
+
+is_mguy_colliding_with_finish_line :: proc(main_guy: ^MainGuy, finish_line: rl.Vector2) -> bool {
+	finish_line_rect := rl.Rectangle {
+		finish_line.x - FINISH_LINE_SIDE_LENGTH / 2,
+		finish_line.y - FINISH_LINE_SIDE_LENGTH / 2,
+		FINISH_LINE_SIDE_LENGTH,
+		FINISH_LINE_SIDE_LENGTH,
+	}
+
+	return is_mguy_colliding_with_obstacle(main_guy, &finish_line_rect)
 }
 
 make_rectangle_from_corners :: proc(c1: rl.Vector2, c2: rl.Vector2) -> rl.Rectangle {
@@ -339,7 +385,7 @@ make_guys :: proc(origin: rl.Vector2) -> [dynamic]Guy {
 
 		new_guy := Guy {
 			0,
-			origin,
+			origin + 2*(direction * GUY_SPEED * rl.GetFrameTime()),
 			direction
 		}
 
