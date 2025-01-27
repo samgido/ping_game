@@ -43,19 +43,23 @@ main :: proc() {
 		200
 	})
 
-	append(&obstacles, rl.Rectangle {
-		f32(rl.GetScreenWidth() * -1 / 2) + 300,
-		50,
-		250,
-		100
-	})
+	// append(&obstacles, rl.Rectangle {
+	// 	f32(rl.GetScreenWidth() * -1 / 2) + 300,
+	// 	50,
+	// 	250,
+	// 	100
+	// })
 
-	append(&obstacles, rl.Rectangle {
-		f32(rl.GetScreenWidth() * -1 / 2),
-		-300,
-		f32(rl.GetScreenWidth()),
-		200
-	})
+	// append(&obstacles, rl.Rectangle {
+	// 	f32(rl.GetScreenWidth() * -1 / 2),
+	// 	-300,
+	// 	f32(rl.GetScreenWidth()),
+	// 	200
+	// })
+
+	current_obstacle_corner1: rl.Vector2	
+	current_obstacle_corner2: rl.Vector2
+	making_obstacle := false
 
 	guys: [dynamic]Guy
 
@@ -70,26 +74,74 @@ main :: proc() {
 		defer rl.EndDrawing()	
 
 		{ // Input
-			if rl.IsKeyDown(.SPACE) && !main_guy.isPulsing {
-				main_guy.isPulsing = true
-				guys = make_guys(main_guy.position)
+			{ // Keyboard
+				using rl.KeyboardKey
+
+				if rl.IsKeyDown(.SPACE) && !main_guy.isPulsing {
+					main_guy.isPulsing = true
+					guys = make_guys(main_guy.position)
+				}
+
+				move_direction := rl.Vector2(0)
+
+				if rl.IsKeyDown(.W) { move_direction += rl.Vector2 { 0, 1 } }
+				if rl.IsKeyDown(.A) { move_direction += rl.Vector2 { -1, 0 } }
+				if rl.IsKeyDown(.S) { move_direction += rl.Vector2 { 0, -1 } }
+				if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
+
+				if move_direction.x != 0 || move_direction.y != 0 {
+					move_main_guy(move_direction, &main_guy, &obstacles)
+				}
+
+				if rl.IsKeyPressed(.R) {
+					render_obstacles = !render_obstacles
+				}
 			}
 
-			move_direction := rl.Vector2(0)
+			{ // Mouse
+				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) { // Handle making a new obstacle
+					if making_obstacle { 
+						corner_x := current_obstacle_corner1.x
+						corner_y := current_obstacle_corner1.y
 
-			using rl.KeyboardKey
+						width := current_obstacle_corner2.x - current_obstacle_corner1.x
+						height := current_obstacle_corner2.y - current_obstacle_corner1.y
 
-			if rl.IsKeyDown(.W) { move_direction += rl.Vector2 { 0, 1 } }
-			if rl.IsKeyDown(.A) { move_direction += rl.Vector2 { -1, 0 } }
-			if rl.IsKeyDown(.S) { move_direction += rl.Vector2 { 0, -1 } }
-			if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
+						if current_obstacle_corner1.x > current_obstacle_corner2.x {
+							corner_x = current_obstacle_corner2.x
+							width = current_obstacle_corner1.x - current_obstacle_corner2.x
+						}
 
-			if move_direction.x != 0 || move_direction.y != 0 {
-				move_main_guy(move_direction, &main_guy, &obstacles)
-			}
+						if current_obstacle_corner1.y > current_obstacle_corner2.y {
+							corner_y = current_obstacle_corner2.y
+							height = current_obstacle_corner1.y - current_obstacle_corner2.y
+						}
 
-			if rl.IsKeyPressed(.R) {
-				render_obstacles = !render_obstacles
+						append(&obstacles, rl.Rectangle {
+							corner_x, 
+							corner_y, 
+							width,
+							height,
+						})
+
+						making_obstacle = false
+					} 
+					else {
+						current_obstacle_corner1 = rl.Vector2 {
+							real_x_to_world(f32(rl.GetMouseX())),
+							real_y_to_world(f32(rl.GetMouseY()))
+						}
+
+						making_obstacle = true
+					}
+				}
+
+				if making_obstacle { // update corner 2 if obstacle is being made
+					current_obstacle_corner2 = rl.Vector2 {
+						real_x_to_world(f32(rl.GetMouseX())),
+						real_y_to_world(f32(rl.GetMouseY()))
+					}
+				}
 			}
 		}
 
@@ -123,9 +175,36 @@ main :: proc() {
 						render_obstacle(&obstacles[i])
 					}
 				}
+
+			}
+
+			if making_obstacle {
+				rl.DrawLineV(world_v2_to_real(current_obstacle_corner1), world_v2_to_real(current_obstacle_corner2), rl.BLUE)
 			}
 		}
 	}
+}
+
+world_v2_to_real :: proc(v: rl.Vector2) -> rl.Vector2 {
+	return rl.Vector2 {
+		world_x_to_real(v.x),
+		world_y_to_real(v.y)
+	}
+}
+
+real_v2_to_world :: proc(v: rl.Vector2) -> rl.Vector2 {
+	return rl.Vector2 {
+		real_x_to_world(v.x),
+		real_y_to_world(v.y)
+	}
+}
+
+real_x_to_world :: proc(x: f32) -> f32 {
+	return x - f32(rl.GetScreenWidth() / 2)  
+}
+
+real_y_to_world :: proc(y: f32) -> f32 {
+	return f32(rl.GetScreenHeight() / 2) - y 
 }
 
 render_obstacle :: proc(obstacle: ^rl.Rectangle) {
