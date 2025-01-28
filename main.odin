@@ -46,6 +46,7 @@ main :: proc() {
 	making_obstacle := false
 
 	finish_line: rl.Vector2
+	valid_finish_line_placement: bool
 
 	game_started := false
 
@@ -78,10 +79,12 @@ main :: proc() {
 				if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
 
 				if (move_direction.x != 0 || move_direction.y != 0) && game_started {
-					move_main_guy(move_direction, &main_guy, &obstacles)
+					move_mguy(move_direction, &main_guy, &obstacles)
 				}
 
-				if rl.IsKeyPressed(.P) && !is_v2_within_obstacles(finish_line, &obstacles){
+				valid_finish_line_placement = !is_v2_within_obstacles(finish_line, &obstacles)
+
+				if rl.IsKeyPressed(.P) && valid_finish_line_placement {
 					game_started = true
 
 					render_obstacles = false
@@ -116,14 +119,20 @@ main :: proc() {
 					}
 				}
 
-				if rl.IsMouseButtonPressed(rl.MouseButton.RIGHT) && render_obstacles && !game_started {
-					mouse_x := real_x_to_world(f32(rl.GetMouseX()))
-					mouse_y := real_y_to_world(f32(rl.GetMouseY()))
+				if rl.IsMouseButtonPressed(rl.MouseButton.RIGHT) {
+					if making_obstacle {
+						making_obstacle = false
+					}
 
-					for i := 0; i < len(obstacles); i += 1 {
-						if is_v2_within_obstacle(rl.Vector2 { mouse_x, mouse_y }, obstacles[i]) {
-							unordered_remove(&obstacles, i)
-							continue
+					if render_obstacles && !game_started {
+						mouse_x := real_x_to_world(f32(rl.GetMouseX()))
+						mouse_y := real_y_to_world(f32(rl.GetMouseY()))
+
+						for i := 0; i < len(obstacles); i += 1 {
+							if is_v2_within_obstacle(rl.Vector2 { mouse_x, mouse_y }, obstacles[i]) {
+								unordered_remove(&obstacles, i)
+								continue
+							}
 						}
 					}
 				}
@@ -156,7 +165,7 @@ main :: proc() {
 			{ // Render
 				render_mguy(&main_guy)
 
-				if is_mguy_colliding_with_finish_line(&main_guy, finish_line) {
+				if is_mguy_colliding_with_finish_line(&main_guy, finish_line) && game_started {
 					break
 				}
 			}
@@ -171,7 +180,6 @@ main :: proc() {
 				}
 
 				if making_obstacle {
-					// these are in real space
 					c1_x := world_x_to_real(current_obstacle_corner1.x)
 					c1_y := world_y_to_real(current_obstacle_corner1.y)
 
@@ -191,8 +199,23 @@ main :: proc() {
 			finish_line_real.x -= FINISH_LINE_SIDE_LENGTH / 2
 			finish_line_real.y -= FINISH_LINE_SIDE_LENGTH / 2
 
-			rl.DrawRectangleV(finish_line_real, rl.Vector2 { FINISH_LINE_SIDE_LENGTH, FINISH_LINE_SIDE_LENGTH }, rl.GREEN)
+			rl.DrawRectangleV(finish_line_real, rl.Vector2 { FINISH_LINE_SIDE_LENGTH, FINISH_LINE_SIDE_LENGTH }, rl.ColorAlpha(rl.GREEN, valid_finish_line_placement ? 1.0 : .15))
 		}
+	}
+
+	for !rl.WindowShouldClose() {
+		rl.BeginDrawing()
+		rl.ClearBackground(BACKGROUND_COLOR)
+		defer rl.EndDrawing() 
+
+		winning_message: cstring = "YOU WIN"
+
+		font := rl.GetFontDefault()
+		font_size: f32 = 50
+
+		text_size := rl.MeasureTextEx(font, winning_message, font_size, 1)
+
+		rl.DrawText(winning_message, (rl.GetScreenWidth() / 2) - i32(text_size.x / 2), (rl.GetScreenHeight() / 2) - i32(text_size.y / 2), i32(font_size), rl.BLACK)
 	}
 
 	rl.CloseWindow()
@@ -303,13 +326,14 @@ render_guy :: proc(guy: ^Guy) {
 	rl.DrawCircle(i32(center.x), i32(center.y), GUY_RADIUS, rl.ColorAlpha(GUY_COLOR, guy_fade_away_alpha(guy.age)))
 }
 
-move_main_guy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynamic]rl.Rectangle) {
+move_mguy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynamic]rl.Rectangle) {
 	new_mguy := MainGuy {
 		main_guy.position + rl.Vector2Normalize(direction) * rl.GetFrameTime() * MGUY_SPEED,
 		false
 	}
 
-	if !is_mguy_colliding_with_obstacles(&new_mguy, obstacles) {
+	half_side_length: f32 = MGUY_SIDE_LENGTH / 2
+	if !is_mguy_colliding_with_obstacles(&new_mguy, obstacles) && new_mguy.x + half_side_length < f32(rl.GetScreenWidth() / 2) && new_mguy.x - half_side_length > -1 * f32(rl.GetScreenWidth() / 2) && new_mguy.y + half_side_length < f32(rl.GetScreenHeight() / 2) && new_mguy.y - half_side_length > -1 * f32(rl.GetScreenHeight() / 2) {
 		main_guy.position = new_mguy.position
 	}
 }
