@@ -3,41 +3,70 @@ package main
 import "core:fmt"
 import "core:strings"
 import "core:math"
+import "core:mem"
 import rl "vendor:raylib"
 
-FINISH_LINE_SIDE_LENGTH :: 10
+// All lengths are in pixels
+
+// Screen
+SCREEN_WIDTH :: 1280 
+SCREEN_HEIGHT :: 720
 
 BACKGROUND_COLOR :: rl.WHITE
 
-GUY_LIFESPAN : f32 : .4
-GUY_RADIUS :: 2
-GUY_SPEED :: 300
-GUY_COLOR :: rl.BLACK
+// Finish Line
+FINISH_LINE_SIDE_LENGTH :: 10
 
+// Guy
 Guy :: struct {
 	age: f32,
 	using position: rl.Vector2,
 	direction: rl.Vector2
 }
 
-MGUY_SPEED :: 250
-MGUY_SIDE_LENGTH :: 6
-MGUY_COLOR :: rl.BLACK
+GUY_LIFESPAN : f32 : 0.8
+GUY_RADIUS :: 2
+GUY_SPEED :: 300
+GUY_COLOR :: rl.BLACK
 
+// Main Guy
 MainGuy :: struct {
 	using position: rl.Vector2,
 	isPulsing: bool,
 }
 
+MGUY_SPEED :: 175
+MGUY_SIDE_LENGTH :: 6
+MGUY_COLOR :: rl.BLACK
+MGUY_START_POSITION :: rl.Vector2 { f32(SCREEN_WIDTH * -1 / 2) + 100, 0 }
+
+MGUY_PATH_SAMPLE_TIME: f32 : 0.05 // in seconds
+MGUY_PATH_SAMPLE_COLOR :: rl.PINK
+MGUY_PATH_SAMPLE_RADIUS : f32 : 2
+
+MGUY_PATH_PING_COLOR :: rl.RED
+MGUY_PATH_PING_RADIUS :: 6
+
+MGUY_COLLISION_COLOR :: rl.BLUE
+MGUY_COLLISION_SIDE_LENGTH :: 12
+
+// Obstacles
 OBSTACLE_COLOR :: rl.BLACK
 
+// Game Loop
+GameState :: enum {
+	Drawing,
+	Playing, 
+	Finished
+}
+
+END_MESSAGE : cstring : "GAME OVER"
+
 main :: proc() {
-	rl.InitWindow(1280, 720, "h")	
+	rl.InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "ping draft")	
 	rl.HideCursor()
 
-	mguy_starting_position := rl.Vector2 { f32(rl.GetScreenWidth() * -1 / 2) + 100, 0 }
-
-	render_obstacles := true
+	game_state := GameState.Drawing
 
 	obstacles: [dynamic]rl.Rectangle
 
@@ -48,14 +77,22 @@ main :: proc() {
 	finish_line: rl.Vector2
 	valid_finish_line_placement: bool
 
-	game_started := false
-
 	guys: [dynamic]Guy
 
 	main_guy := MainGuy {
-		mguy_starting_position, 
+		MGUY_START_POSITION, 
 		false,
 	}
+
+	main_guy_path: [dynamic]rl.Vector2
+	main_guy_pings: [dynamic]rl.Vector2
+	main_guy_collisions: [dynamic]rl.Vector2
+
+	timer: f32 = 0
+
+	collision_resets := true
+
+	win := false
 
 	for !rl.WindowShouldClose() {
 		rl.BeginDrawing()
@@ -66,9 +103,12 @@ main :: proc() {
 			{ // Keyboard
 				using rl.KeyboardKey
 
-				if (rl.IsKeyDown(.SPACE) && !main_guy.isPulsing) && game_started {
+				if (rl.IsKeyDown(.SPACE) && !main_guy.isPulsing) && game_state == GameState.Playing {
 					main_guy.isPulsing = true
 					guys = make_guys(main_guy.position)
+
+					new_ping := rl.Vector2 { main_guy.x, main_guy.y }
+					append(&main_guy_pings, new_ping)
 				}
 
 				move_direction := rl.Vector2(0)
@@ -78,21 +118,34 @@ main :: proc() {
 				if rl.IsKeyDown(.S) { move_direction += rl.Vector2 { 0, -1 } }
 				if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
 
-				if (move_direction.x != 0 || move_direction.y != 0) && game_started {
-					move_mguy(move_direction, &main_guy, &obstacles)
+				if (move_direction.x != 0 || move_direction.y != 0) && game_state == GameState.Playing {
+					if move_mguy(move_direction, &main_guy, &obstacles) && collision_resets {
+						append(&main_guy_collisions, main_guy.position)
+						main_guy.position = MGUY_START_POSITION
+					}
 				}
 
-				valid_finish_line_placement = !is_v2_within_obstacles(finish_line, &obstacles)
-
-				if rl.IsKeyPressed(.P) && valid_finish_line_placement {
-					game_started = true
-
-					render_obstacles = false
+				if rl.IsKeyPressed(.P) && !is_v2_within_obstacles(finish_line, &obstacles) {
+					game_state = GameState.Playing
 				}
+
+				if rl.IsKeyPressed(.F) && game_state == GameState.Playing {
+					fmt.println("forfeited")
+					win = false
+					end_play(win, &game_state, &main_guy, &guys)
+				}
+
+				if rl.IsKeyPressed(.C) {
+					collision_resets = !collision_resets
+
+					if collision_resets { fmt.println("collision now resets") }
+					else { fmt.println("collision no longer resets") }
+				}
+
 			}
 
 			{ // Mouse
-				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) && render_obstacles && !game_started { // Handle making a new obstacle
+				if rl.IsMouseButtonPressed(rl.MouseButton.LEFT) && game_state == GameState.Drawing { // Handle making a new obstacle
 					if making_obstacle {
 						new_rect := make_rectangle_from_corners(current_obstacle_corner1, current_obstacle_corner2)
 
@@ -124,7 +177,7 @@ main :: proc() {
 						making_obstacle = false
 					}
 
-					if render_obstacles && !game_started {
+					if game_state == GameState.Drawing {
 						mouse_x := real_x_to_world(f32(rl.GetMouseX()))
 						mouse_y := real_y_to_world(f32(rl.GetMouseY()))
 
@@ -137,11 +190,17 @@ main :: proc() {
 					}
 				}
 
-				if !game_started {
+				if game_state == GameState.Drawing {
 					finish_line.x = real_x_to_world(f32(rl.GetMouseX()))
 					finish_line.y = real_y_to_world(f32(rl.GetMouseY()))
 				}
+
+				if game_state == GameState.Finished { rl.ShowCursor() }
+				else { rl.HideCursor() }
+
+				valid_finish_line_placement = !is_v2_within_obstacles(finish_line, &obstacles)
 			}
+
 		}
 
 		{ // Guys
@@ -162,17 +221,27 @@ main :: proc() {
 		}
 
 		{ // Main Guy
-			{ // Render
+			if game_state != GameState.Finished { // Render
 				render_mguy(&main_guy)
 
-				if is_mguy_colliding_with_finish_line(&main_guy, finish_line) && game_started {
-					break
+				if is_mguy_colliding_with_finish_line(&main_guy, finish_line) && game_state == GameState.Playing {
+					win = true
+					end_play(win, &game_state, &main_guy, &guys)
 				}
+			}
+
+			if timer > MGUY_PATH_SAMPLE_TIME {
+				if game_state == GameState.Playing { // TODO; the sampling timer should start on game_state == Playing
+					new_path := rl.Vector2 { main_guy.x, main_guy.y }
+					append(&main_guy_path, new_path)
+				}
+
+				timer = 0
 			}
 		}
 
 		{ // Obstacles
-			if render_obstacles {
+			if game_state != GameState.Playing {
 				for i := 0; i < len(obstacles); i += 1{
 					{ // Render
 						render_obstacle(&obstacles[i])
@@ -195,30 +264,73 @@ main :: proc() {
 		}
 
 		{ // Finish Line
+			// Always getting rendered
 			finish_line_real := world_v2_to_real(finish_line)
-			finish_line_real.x -= FINISH_LINE_SIDE_LENGTH / 2
-			finish_line_real.y -= FINISH_LINE_SIDE_LENGTH / 2
+			finish_line_real -= FINISH_LINE_SIDE_LENGTH / 2
 
 			rl.DrawRectangleV(finish_line_real, rl.Vector2 { FINISH_LINE_SIDE_LENGTH, FINISH_LINE_SIDE_LENGTH }, rl.ColorAlpha(rl.GREEN, valid_finish_line_placement ? 1.0 : .15))
 		}
-	}
 
-	for !rl.WindowShouldClose() {
-		rl.BeginDrawing()
-		rl.ClearBackground(BACKGROUND_COLOR)
-		defer rl.EndDrawing() 
+		if game_state == GameState.Finished { // Game over stuff
+			{ // End message text
+				font := rl.GetFontDefault() 
+				font_size: f32 = 50
 
-		winning_message: cstring = "YOU WIN"
+				text_size := rl.MeasureTextEx(font, END_MESSAGE, font_size, 1)
+				rl.DrawText(END_MESSAGE, (rl.GetScreenWidth() / 2) - i32(text_size.x / 2), (rl.GetScreenHeight() / 2) - i32(text_size.y / 2), i32(font_size), rl.BLACK)
+			}
 
-		font := rl.GetFontDefault()
-		font_size: f32 = 50
+			{ // Path
+				for i := 0; i < len(main_guy_path); i += 1 { 
+					path_real := world_v2_to_real(main_guy_path[i])
+					rl.DrawCircle(i32(path_real.x), i32(path_real.y), MGUY_PATH_SAMPLE_RADIUS, MGUY_PATH_SAMPLE_COLOR)
+				}
 
-		text_size := rl.MeasureTextEx(font, winning_message, font_size, 1)
+				for i := 0; i < len(main_guy_pings); i += 1 { 
+					path_real := world_v2_to_real(main_guy_pings[i])
 
-		rl.DrawText(winning_message, (rl.GetScreenWidth() / 2) - i32(text_size.x / 2), (rl.GetScreenHeight() / 2) - i32(text_size.y / 2), i32(font_size), rl.BLACK)
+					rl.DrawCircle(i32(path_real.x), i32(path_real.y), MGUY_PATH_PING_RADIUS, MGUY_PATH_PING_COLOR)
+				}
+
+				for i := 0; i < len(main_guy_collisions); i += 1 {
+					collision_real := world_v2_to_real(main_guy_collisions[i])	
+					collision_real -= MGUY_COLLISION_SIDE_LENGTH / 2
+					rl.DrawRectangle(i32(collision_real.x), i32(collision_real.y), MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_COLOR)
+				}
+			}
+
+			{ // Buttons
+				if rl.GuiButton( rl.Rectangle { 10, 10, 100, 100 }, "Done") {
+					break
+				}
+
+				if rl.GuiButton(rl.Rectangle { 120, 120, 100, 100 }, "Play Again") {
+					game_state = GameState.Drawing
+					clear_for_new_game(&obstacles, &main_guy_path, &main_guy_pings, &main_guy_collisions)
+				}
+			}
+		}
+
+		timer += rl.GetFrameTime()
 	}
 
 	rl.CloseWindow()
+}
+
+clear_for_new_game :: proc(obstacles: ^[dynamic]rl.Rectangle, path: ^[dynamic]rl.Vector2, ping_path: ^[dynamic]rl.Vector2, collision_path: ^[dynamic]rl.Vector2) {
+	clear(obstacles)
+	clear(path)
+	clear(ping_path)
+	clear(collision_path)
+}
+
+end_play :: proc(win: bool, state: ^GameState, main_guy: ^MainGuy, guys: ^[dynamic]Guy) {
+	clear(guys)
+
+	main_guy.position = MGUY_START_POSITION
+	main_guy.isPulsing = false
+
+	state^ = GameState.Finished
 }
 
 is_v2_within_obstacle :: proc(v: rl.Vector2, obstacle: rl.Rectangle) -> bool {
@@ -326,7 +438,7 @@ render_guy :: proc(guy: ^Guy) {
 	rl.DrawCircle(i32(center.x), i32(center.y), GUY_RADIUS, rl.ColorAlpha(GUY_COLOR, guy_fade_away_alpha(guy.age)))
 }
 
-move_mguy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynamic]rl.Rectangle) {
+move_mguy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynamic]rl.Rectangle) -> bool {
 	new_mguy := MainGuy {
 		main_guy.position + rl.Vector2Normalize(direction) * rl.GetFrameTime() * MGUY_SPEED,
 		false
@@ -335,6 +447,11 @@ move_mguy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynami
 	half_side_length: f32 = MGUY_SIDE_LENGTH / 2
 	if !is_mguy_colliding_with_obstacles(&new_mguy, obstacles) && new_mguy.x + half_side_length < f32(rl.GetScreenWidth() / 2) && new_mguy.x - half_side_length > -1 * f32(rl.GetScreenWidth() / 2) && new_mguy.y + half_side_length < f32(rl.GetScreenHeight() / 2) && new_mguy.y - half_side_length > -1 * f32(rl.GetScreenHeight() / 2) {
 		main_guy.position = new_mguy.position
+		return false
+	}
+	else { 
+		fmt.println("colliding ", rl.GetTime())
+		return true 
 	}
 }
 
