@@ -33,6 +33,19 @@ GUY_COLOR :: rl.BLACK
 MainGuy :: struct {
 	using position: rl.Vector2,
 	isPulsing: bool,
+	isReversing: bool,
+	path: [dynamic]MainGuyPathNode,
+}
+
+MainGuyPathNode :: struct {
+	using position: rl.Vector2,
+	type: MainGuyPathNodeType,
+}
+
+MainGuyPathNodeType :: enum {
+	Path,
+	Ping,
+	Collision
 }
 
 MGUY_SPEED :: 175
@@ -43,12 +56,16 @@ MGUY_START_POSITION :: rl.Vector2 { f32(SCREEN_WIDTH * -1 / 2) + 100, 0 }
 MGUY_PATH_SAMPLE_TIME: f32 : 0.05 // in seconds
 MGUY_PATH_SAMPLE_COLOR :: rl.PINK
 MGUY_PATH_SAMPLE_RADIUS : f32 : 2
+MGUY_PATH_SAMPLE_MIN_DISTANCE : f32 : .05 // The lower bound on distance before the two are touching
 
 MGUY_PATH_PING_COLOR :: rl.RED
 MGUY_PATH_PING_RADIUS :: 6
 
 MGUY_COLLISION_COLOR :: rl.BLUE
 MGUY_COLLISION_SIDE_LENGTH :: 12
+
+MGUY_REVERSAL_TIME : f32 : .8 // in seconds
+MGUY_REVERSAL_SPEED_MULTIPLIER : f32 : 2
 
 // Obstacles
 OBSTACLE_COLOR :: rl.BLACK
@@ -80,17 +97,15 @@ main :: proc() {
 	guys: [dynamic]Guy
 
 	main_guy := MainGuy {
-		MGUY_START_POSITION, 
-		false,
+		position = MGUY_START_POSITION, 
+		isPulsing = false,
+		isReversing = false,	
 	}
 
-	main_guy_path: [dynamic]rl.Vector2
-	main_guy_pings: [dynamic]rl.Vector2
-	main_guy_collisions: [dynamic]rl.Vector2
-
 	timer: f32 = 0
+	reversal_timer: f32 = 0
 
-	collision_resets := true
+	collision_punishes := true
 
 	win := false
 
@@ -103,12 +118,15 @@ main :: proc() {
 			{ // Keyboard
 				using rl.KeyboardKey
 
-				if (rl.IsKeyDown(.SPACE) && !main_guy.isPulsing) && game_state == GameState.Playing {
+				if (rl.IsKeyDown(.SPACE) && !main_guy.isPulsing && !main_guy.isReversing) && game_state == GameState.Playing {
 					main_guy.isPulsing = true
 					guys = make_guys(main_guy.position)
 
-					new_ping := rl.Vector2 { main_guy.x, main_guy.y }
-					append(&main_guy_pings, new_ping)
+					new_ping := MainGuyPathNode {
+						rl.Vector2 { main_guy.x, main_guy.y },
+						MainGuyPathNodeType.Ping
+					}
+					append(&main_guy.path, new_ping)
 				}
 
 				move_direction := rl.Vector2(0)
@@ -118,10 +136,12 @@ main :: proc() {
 				if rl.IsKeyDown(.S) { move_direction += rl.Vector2 { 0, -1 } }
 				if rl.IsKeyDown(.D) { move_direction += rl.Vector2 { 1, 0 } }
 
-				if (move_direction.x != 0 || move_direction.y != 0) && game_state == GameState.Playing {
-					if move_mguy(move_direction, &main_guy, &obstacles) && collision_resets {
-						append(&main_guy_collisions, main_guy.position)
-						main_guy.position = MGUY_START_POSITION
+				if (move_direction.x != 0 || move_direction.y != 0) && game_state == GameState.Playing && !main_guy.isReversing {
+					if move_mguy(move_direction, &main_guy, &obstacles) && collision_punishes {
+						append(&main_guy.path, MainGuyPathNode { main_guy.position, MainGuyPathNodeType.Collision })
+
+						main_guy.isReversing = true
+						reversal_timer = 0
 					}
 				}
 
@@ -136,10 +156,10 @@ main :: proc() {
 				}
 
 				if rl.IsKeyPressed(.C) {
-					collision_resets = !collision_resets
+					collision_punishes = !collision_punishes
 
-					if collision_resets { fmt.println("collision now resets") }
-					else { fmt.println("collision no longer resets") }
+					if collision_punishes { fmt.println("collision now punishes") }
+					else { fmt.println("collision no longer punishes") }
 				}
 
 			}
@@ -232,11 +252,20 @@ main :: proc() {
 
 			if timer > MGUY_PATH_SAMPLE_TIME {
 				if game_state == GameState.Playing { // TODO; the sampling timer should start on game_state == Playing
-					new_path := rl.Vector2 { main_guy.x, main_guy.y }
-					append(&main_guy_path, new_path)
+					new_path := MainGuyPathNode { rl.Vector2 { main_guy.x, main_guy.y }, MainGuyPathNodeType.Path }
+					append(&main_guy.path, new_path)
 				}
 
 				timer = 0
+			}
+
+			if main_guy.isReversing && reversal_timer < MGUY_REVERSAL_TIME {
+				move_mguy_towards_last_path_node(&main_guy)
+
+				reversal_timer += rl.GetFrameTime()
+			}
+			else if reversal_timer > MGUY_REVERSAL_TIME { 
+				main_guy.isReversing = false
 			}
 		}
 
@@ -281,21 +310,8 @@ main :: proc() {
 			}
 
 			{ // Path
-				for i := 0; i < len(main_guy_path); i += 1 { 
-					path_real := world_v2_to_real(main_guy_path[i])
-					rl.DrawCircle(i32(path_real.x), i32(path_real.y), MGUY_PATH_SAMPLE_RADIUS, MGUY_PATH_SAMPLE_COLOR)
-				}
-
-				for i := 0; i < len(main_guy_pings); i += 1 { 
-					path_real := world_v2_to_real(main_guy_pings[i])
-
-					rl.DrawCircle(i32(path_real.x), i32(path_real.y), MGUY_PATH_PING_RADIUS, MGUY_PATH_PING_COLOR)
-				}
-
-				for i := 0; i < len(main_guy_collisions); i += 1 {
-					collision_real := world_v2_to_real(main_guy_collisions[i])	
-					collision_real -= MGUY_COLLISION_SIDE_LENGTH / 2
-					rl.DrawRectangle(i32(collision_real.x), i32(collision_real.y), MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_COLOR)
+				for i := 0; i < len(main_guy.path); i += 1 {
+					draw_path_node(&main_guy.path[i])
 				}
 			}
 
@@ -306,7 +322,7 @@ main :: proc() {
 
 				if rl.GuiButton(rl.Rectangle { 120, 120, 100, 100 }, "Play Again") {
 					game_state = GameState.Drawing
-					clear_for_new_game(&obstacles, &main_guy_path, &main_guy_pings, &main_guy_collisions)
+					clear_for_new_game(&obstacles, &main_guy)
 				}
 			}
 		}
@@ -317,11 +333,49 @@ main :: proc() {
 	rl.CloseWindow()
 }
 
-clear_for_new_game :: proc(obstacles: ^[dynamic]rl.Rectangle, path: ^[dynamic]rl.Vector2, ping_path: ^[dynamic]rl.Vector2, collision_path: ^[dynamic]rl.Vector2) {
+move_mguy_towards_last_path_node :: proc(main_guy: ^MainGuy) {
+	last_path_sample_index := -1
+	for i := len(main_guy.path) - 1; i >= 0; i -= 1 {
+		current_node := main_guy.path[i]
+
+		if current_node.type != MainGuyPathNodeType.Path { continue }
+
+		if math.abs(rl.Vector2Distance(current_node.position, main_guy.position)) > MGUY_PATH_SAMPLE_MIN_DISTANCE { // If this path node is not too close to main guy, it's the next
+			last_path_sample_index = i
+			break
+		}
+		else { // This path node is too close, should be removed
+			ordered_remove(&main_guy.path, i) // Gotta be ordered, effectively using this as a stack with some nodes that aren't considered
+		}
+	}
+
+	if last_path_sample_index == -1 { return }
+	// TODO move the logic above to it's own procedure
+
+	target := main_guy.path[last_path_sample_index]
+
+	direction := rl.Vector2Normalize(target - main_guy.position)
+
+	main_guy.position += direction * MGUY_REVERSAL_SPEED_MULTIPLIER * MGUY_SPEED * rl.GetFrameTime()
+}
+
+draw_path_node :: proc(node: ^MainGuyPathNode) {
+	node_real := world_v2_to_real(node.position)
+
+	switch node.type {
+		case .Path:
+			rl.DrawCircle(i32(node_real.x), i32(node_real.y), MGUY_PATH_SAMPLE_RADIUS, MGUY_PATH_SAMPLE_COLOR)
+		case .Ping:
+			rl.DrawCircle(i32(node_real.x), i32(node_real.y), MGUY_PATH_PING_RADIUS, MGUY_PATH_PING_COLOR)
+		case .Collision:
+			node_real -= MGUY_COLLISION_SIDE_LENGTH / 2
+			rl.DrawRectangle(i32(node_real.x), i32(node_real.y), MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_SIDE_LENGTH, MGUY_COLLISION_COLOR)
+	}
+}
+
+clear_for_new_game :: proc(obstacles: ^[dynamic]rl.Rectangle, main_guy: ^MainGuy) {
 	clear(obstacles)
-	clear(path)
-	clear(ping_path)
-	clear(collision_path)
+	clear(&main_guy.path)
 }
 
 end_play :: proc(win: bool, state: ^GameState, main_guy: ^MainGuy, guys: ^[dynamic]Guy) {
@@ -329,6 +383,7 @@ end_play :: proc(win: bool, state: ^GameState, main_guy: ^MainGuy, guys: ^[dynam
 
 	main_guy.position = MGUY_START_POSITION
 	main_guy.isPulsing = false
+	main_guy.isReversing = false
 
 	state^ = GameState.Finished
 }
@@ -440,8 +495,7 @@ render_guy :: proc(guy: ^Guy) {
 
 move_mguy :: proc(direction: rl.Vector2, main_guy: ^MainGuy, obstacles: ^[dynamic]rl.Rectangle) -> bool {
 	new_mguy := MainGuy {
-		main_guy.position + rl.Vector2Normalize(direction) * rl.GetFrameTime() * MGUY_SPEED,
-		false
+		position = main_guy.position + rl.Vector2Normalize(direction) * rl.GetFrameTime() * MGUY_SPEED,
 	}
 
 	half_side_length: f32 = MGUY_SIDE_LENGTH / 2
